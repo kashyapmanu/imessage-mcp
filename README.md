@@ -38,7 +38,7 @@ Claude Desktop starts MCP servers through a helper that makes macOS check the pr
 scripts/build-launcher.sh   # needs Xcode Command Line Tools (cc, codesign)
 ```
 
-This creates `~/.local/share/imessage-mcp/imessage-mcp-launcher`. Add that file under Full Disk Access, and use it as the `command` in the config below (no `args`). Re-run the script and re-grant if you move the repo, upgrade Node, or rebuild.
+This creates `~/.local/share/imessage-mcp/imessage-mcp-launcher`. Add that file under Full Disk Access, and use it as the `command` in the config below (no `args`). The launcher bakes in two paths: the stable Homebrew symlink `/opt/homebrew/bin/node` (so Node upgrades and `npm run build` need no action) and this repo's `dist/index.js`. Re-run the script and re-grant only if you move the repo or stop using Homebrew Node.
 
 ## Configuration
 
