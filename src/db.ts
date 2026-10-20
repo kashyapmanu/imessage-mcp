@@ -37,6 +37,13 @@ function expandHome(p: string): string {
 
 let cached: DatabaseSync | null = null;
 
+/** Open any SQLite file read-only, with query_only enforced. Shared with contacts.ts. */
+export function openReadOnly(path: string): DatabaseSync {
+  const db = new DatabaseSync(path, { readOnly: true });
+  db.exec("PRAGMA query_only = ON");
+  return db;
+}
+
 /**
  * Open the Messages database read-only, lazily, on first use. Failed opens are
  * not cached, so a later call can succeed once permissions are fixed.
@@ -45,8 +52,7 @@ export function getDb(): DatabaseSync {
   if (cached) return cached;
   const path = getDbPath();
   try {
-    const db = new DatabaseSync(path, { readOnly: true });
-    db.exec("PRAGMA query_only = ON");
+    const db = openReadOnly(path);
     cached = db;
     return db;
   } catch (err) {

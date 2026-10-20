@@ -1,5 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { handlesMatching, nameForHandle } from "./contacts.js";
 import { decodeAttributedBody } from "./decode.js";
 import {
   all,
@@ -15,6 +16,9 @@ import {
 /** Per-message text cap and total response cap, to keep tool output bounded. */
 const MAX_TEXT_CHARS = 2000;
 const MAX_OUTPUT_CHARS = 100_000;
+/** Caps on handles pulled in from a contact name, to keep the generated SQL bounded. */
+const MAX_NAME_HANDLES_FILTER = 200;
+const MAX_NAME_HANDLES_LIST = 1000;
 /** search_messages stops scanning after this many rows, reporting the cap. */
 const SEARCH_SCAN_CAP = 100_000;
 const SEARCH_BATCH = 1000;
@@ -38,7 +42,7 @@ const contactSchema = z
   .max(200)
   .optional()
   .describe(
-    "Substring of a phone number, email or handle id (e.g. '+1555' or 'alice@'). Matches messages from that handle, and your replies in chats that include it.",
+    "Contact name, phone number, email or handle id substring (e.g. 'Alice', '(415) 555-1234', 'alice@', '+1555'). Names are resolved from macOS Contacts. Matches messages from matching handles, and your replies in chats that include them.",
   );
 
 const chatIdSchema = z.number().int().positive().describe("Chat id as returned by list_chats.");
@@ -99,10 +103,12 @@ function capText(text: string | null): string | null {
 }
 
 function formatMessage(row: MessageRow) {
+  const incoming = row.is_from_me === 0;
   return {
     id: row.id,
     time: appleToIso(row.date),
     from: row.is_from_me ? "me" : (row.sender_handle ?? "unknown"),
+    ...(incoming ? { sender_name: row.sender_handle ? nameForHandle(row.sender_handle) : null } : {}),
     is_from_me: row.is_from_me === 1,
     text: capText(resolveText(row)),
     attachments: row.attachment_count,
@@ -144,6 +150,24 @@ function guarded<A>(fn: (args: A) => ReturnType<typeof jsonResult>) {
   };
 }
 
+/**
+ * Contact filter: matches the raw substring (handle id, phone or email) OR any
+ * chat.db handle belonging to a contact whose name contains it. One
+ * contactPredicate per needle, joined with OR.
+ */
+function contactClause(alias: string, contact: string, params: Param[]): string {
+  const needle = contact.trim();
+  const nameHandles = handlesMatching(needle);
+  if (nameHandles.length > MAX_NAME_HANDLES_FILTER) {
+    console.error(
+      `[imessage-mcp] contact name matches ${nameHandles.length} handles; filtering on the first ${MAX_NAME_HANDLES_FILTER}`,
+    );
+  }
+  const needles = [needle, ...nameHandles.slice(0, MAX_NAME_HANDLES_FILTER)];
+  const predicates = [...new Set(needles)].map((n) => contactPredicate(alias, n, params));
+  return `(${predicates.join(" OR ")})`;
+}
+
 /** Shared WHERE fragments for message queries. */
 function messageFilters(opts: {
   contact?: string;
@@ -154,7 +178,7 @@ function messageFilters(opts: {
   const where: string[] = [REAL_MESSAGE];
   const params: Param[] = [];
   if (opts.chatId !== undefined) where.push(chatPredicate("m", opts.chatId, params));
-  if (opts.contact) where.push(contactPredicate("m", opts.contact, params));
+  if (opts.contact) where.push(contactClause("m", opts.contact, params));
   if (opts.since) {
     where.push("m.date >= ?");
     params.push(isoToApple(opts.since));
@@ -182,7 +206,7 @@ export function registerTools(server: McpServer): void {
     {
       title: "List iMessage chats",
       description:
-        "List recent iMessage/SMS conversations, newest activity first. Returns chat id, display name or participant handles, last message time and message count. Use the chat id with read_messages, get_conversation.",
+        "List recent iMessage/SMS conversations, newest activity first. Returns chat id, name (group display name, else participant contact names, else handles), participant handles with their Contacts names (participant_names), last message time and message count. Use the chat id with read_messages, get_conversation.",
       inputSchema: {
         limit: limitSchema,
         offset: z.number().int().min(0).max(100000).default(0).describe("Number of chats to skip (pagination)."),
@@ -205,14 +229,23 @@ export function registerTools(server: McpServer): void {
          LIMIT ? OFFSET ?`,
         [limit, offset],
       );
-      const chats = rows.map((r) => ({
-        chat_id: r.id,
-        name: r.display_name || r.participants || r.chat_identifier,
-        participants: r.participants && r.participants.length > 300 ? `${r.participants.slice(0, 300)}...` : r.participants,
-        service: r.service_name,
-        last_message_time: appleToIso(r.last_date),
-        message_count: r.message_count,
-      }));
+      const chats = rows.map((r) => {
+        const handles = r.participants ? r.participants.split(", ") : [];
+        const participantNames = [...new Set(handles.map(nameForHandle).filter((n): n is string => n !== null))];
+        return {
+          chat_id: r.id,
+          name:
+            r.display_name ||
+            (participantNames.length > 0 ? participantNames.join(", ") : null) ||
+            r.participants ||
+            r.chat_identifier,
+          participants: r.participants && r.participants.length > 300 ? `${r.participants.slice(0, 300)}...` : r.participants,
+          participant_names: participantNames,
+          service: r.service_name,
+          last_message_time: appleToIso(r.last_date),
+          message_count: r.message_count,
+        };
+      });
       return jsonResult({ count: chats.length, offset, chats }, "chats");
     }),
   );
@@ -222,7 +255,7 @@ export function registerTools(server: McpServer): void {
     {
       title: "Read iMessage messages",
       description:
-        "Read messages newest-first, optionally filtered by chat id, contact substring and date range. Returns timestamp, sender (me or handle), text, is_from_me and attachment count. Tapbacks and group events are excluded.",
+        "Read messages newest-first, optionally filtered by chat id, contact (name, phone or email) and date range. Returns timestamp, sender (me or handle), sender_name from Contacts for incoming messages, text, is_from_me and attachment count. Tapbacks and group events are excluded.",
       inputSchema: {
         chat_id: chatIdSchema.optional(),
         contact: contactSchema,
@@ -250,7 +283,7 @@ export function registerTools(server: McpServer): void {
     {
       title: "Search iMessage text",
       description:
-        "Case-insensitive substring search over message text, newest first. Also decodes attributedBody for messages whose plain text is empty. Optional contact and date filters are applied in SQL. The scan is capped; the result says if the cap was hit, meaning the search was not exhaustive.",
+        "Case-insensitive substring search over message text, newest first. Also decodes attributedBody for messages whose plain text is empty. Optional contact (name, phone or email) and date filters are applied in SQL. Incoming messages include sender_name from Contacts. The scan is capped; the result says if the cap was hit, meaning the search was not exhaustive.",
       inputSchema: {
         query: z.string().min(1).max(200).describe("Text to look for (case-insensitive substring)."),
         contact: contactSchema,
@@ -357,10 +390,15 @@ export function registerTools(server: McpServer): void {
     {
       title: "List handles with message counts",
       description:
-        "List phone numbers, emails and other Messages handles with how many messages each has, most active first. Optional query filters by substring of the handle id.",
+        "List phone numbers, emails and other Messages handles with their Contacts name (if any) and how many messages each has, most active first. Optional query matches a substring of the handle id or of a contact name.",
       inputSchema: {
         limit: limitSchema,
-        query: z.string().min(1).max(200).optional().describe("Substring of a handle id to filter by."),
+        query: z
+          .string()
+          .min(1)
+          .max(200)
+          .optional()
+          .describe("Substring of a handle id, a contact name, or a phone number's digits to filter by (e.g. '+1555', 'alice@', 'Alice', '(415) 555-1234')."),
       },
       annotations: readOnly,
     },
@@ -368,8 +406,14 @@ export function registerTools(server: McpServer): void {
       const params: Param[] = [];
       let filter = "";
       if (query) {
-        filter = "WHERE h.id LIKE ? ESCAPE '\\'";
+        const clauses = ["h.id LIKE ? ESCAPE '\\'"];
         params.push(likePattern(query.trim()));
+        const nameHandles = handlesMatching(query).slice(0, MAX_NAME_HANDLES_LIST);
+        if (nameHandles.length > 0) {
+          clauses.push(`h.id IN (${nameHandles.map(() => "?").join(", ")})`);
+          params.push(...nameHandles);
+        }
+        filter = `WHERE (${clauses.join(" OR ")})`;
       }
       params.push(limit);
       const rows = all<HandleRow>(
@@ -389,6 +433,7 @@ export function registerTools(server: McpServer): void {
       const handles = rows.map((r) => ({
         handle_id: r.id,
         handle: r.handle,
+        name: nameForHandle(r.handle),
         service: r.service,
         message_count: r.message_count,
         last_message_time: appleToIso(r.last_date),
