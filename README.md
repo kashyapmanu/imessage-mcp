@@ -30,6 +30,16 @@ macOS protects `~/Library/Messages` and `~/Library/Application Support/AddressBo
 
 If Messages access is missing, every tool returns an error that explains this. If only Contacts access is missing, message tools still work but names are omitted, and the server logs one line to stderr.
 
+### Grant access to this server only (recommended)
+
+Claude Desktop starts MCP servers through a helper that makes macOS check the program being run, so a plain `node` entry needs Full Disk Access granted to **node itself**, which would cover every Node script. Instead, build a tiny launcher that runs only this server and grant access to that:
+
+```sh
+scripts/build-launcher.sh   # needs Xcode Command Line Tools (cc, codesign)
+```
+
+This creates `~/.local/share/imessage-mcp/imessage-mcp-launcher`. Add that file under Full Disk Access, and use it as the `command` in the config below (no `args`). Re-run the script and re-grant if you move the repo, upgrade Node, or rebuild.
+
 ## Configuration
 
 | Variable           | Default                                             | Purpose                                                                 |
@@ -71,14 +81,13 @@ Add this to `claude_desktop_config.json` (Claude > Settings > Developer > Edit C
 {
   "mcpServers": {
     "imessage": {
-      "command": "/absolute/path/to/node",
-      "args": ["/absolute/path/to/imessage-mcp/dist/index.js"]
+      "command": "/Users/YOU/.local/share/imessage-mcp/imessage-mcp-launcher"
     }
   }
 }
 ```
 
-Use the output of `command -v node` for `command`, since Claude Desktop does not inherit your shell `PATH`. Restart Claude Desktop afterwards.
+Use the absolute path to the launcher. (Without the launcher, use the absolute path from `command -v node` as `command` and `["/absolute/path/to/imessage-mcp/dist/index.js"]` as `args`, and grant Full Disk Access to node.) Fully quit Claude Desktop from the menu bar and reopen it afterwards.
 
 ## Set it up with an AI agent
 
@@ -90,8 +99,8 @@ Set up the iMessage MCP server from https://github.com/kashyapmanu/imessage-mcp 
 1. Check that Node.js 22.13+ is installed (`node -v`). If not, tell me and stop.
 2. Clone the repo into ~/Projects/imessage-mcp, then run `npm install` and `npm run build`. Run `npm run smoke` and report the result (it prints only counts, never message contents).
 3. Get the absolute path of node (`command -v node`) and of dist/index.js.
-4. Back up ~/Library/Application Support/Claude/claude_desktop_config.json, then add an "imessage" entry under "mcpServers" with that node path as "command" and the dist/index.js path in "args". Keep every existing server entry unchanged and keep the JSON valid.
-5. Tell me to grant Claude Full Disk Access (System Settings > Privacy & Security > Full Disk Access), then fully quit and reopen Claude Desktop. Do not change any system or security setting yourself.
+4. Run scripts/build-launcher.sh and use the resulting ~/.local/share/imessage-mcp/imessage-mcp-launcher as the "command" (no args). Back up ~/Library/Application Support/Claude/claude_desktop_config.json, then add an "imessage" entry under "mcpServers" with that node path as "command" and the dist/index.js path in "args". Keep every existing server entry unchanged and keep the JSON valid.
+5. Tell me to add that launcher file (not node, not all of Node) to Full Disk Access (System Settings > Privacy & Security > Full Disk Access), then fully quit and reopen Claude Desktop. Do not change any system or security setting yourself.
 6. After I restart, help me verify by asking Claude to list my 3 most recent chats. Do not print or store message contents beyond what I ask for.
 
 Ask me before anything that is not on this list.
