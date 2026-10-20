@@ -12,6 +12,8 @@ It runs on your Mac over stdio, opens the database read-only, and never sends da
 ## Install and build
 
 ```sh
+git clone https://github.com/kashyapmanu/imessage-mcp.git
+cd imessage-mcp
 npm install
 npm run build
 ```
@@ -70,13 +72,30 @@ Add this to `claude_desktop_config.json` (Claude > Settings > Developer > Edit C
   "mcpServers": {
     "imessage": {
       "command": "/absolute/path/to/node",
-      "args": ["/Users/manu/Projects/iMessage-mcp/dist/index.js"]
+      "args": ["/absolute/path/to/imessage-mcp/dist/index.js"]
     }
   }
 }
 ```
 
 Use the output of `command -v node` for `command`, since Claude Desktop does not inherit your shell `PATH`. Restart Claude Desktop afterwards.
+
+## Set it up with an AI agent
+
+Paste this into Claude (Claude Code, or any agent with shell access on your Mac) to install and connect the server for you:
+
+```text
+Set up the iMessage MCP server from https://github.com/kashyapmanu/imessage-mcp on this Mac so I can use it in Claude Desktop. It is local-only and read-only.
+
+1. Check that Node.js 22.13+ is installed (`node -v`). If not, tell me and stop.
+2. Clone the repo into ~/Projects/imessage-mcp, then run `npm install` and `npm run build`. Run `npm run smoke` and report the result (it prints only counts, never message contents).
+3. Get the absolute path of node (`command -v node`) and of dist/index.js.
+4. Back up ~/Library/Application Support/Claude/claude_desktop_config.json, then add an "imessage" entry under "mcpServers" with that node path as "command" and the dist/index.js path in "args". Keep every existing server entry unchanged and keep the JSON valid.
+5. Tell me to grant Claude Full Disk Access (System Settings > Privacy & Security > Full Disk Access), then fully quit and reopen Claude Desktop. Do not change any system or security setting yourself.
+6. After I restart, help me verify by asking Claude to list my 3 most recent chats. Do not print or store message contents beyond what I ask for.
+
+Ask me before anything that is not on this list.
+```
 
 ## Security and privacy
 
