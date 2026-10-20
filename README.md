@@ -98,8 +98,8 @@ Set up the iMessage MCP server from https://github.com/kashyapmanu/imessage-mcp 
 
 1. Check that Node.js 22.13+ is installed (`node -v`). If not, tell me and stop.
 2. Clone the repo into ~/Projects/imessage-mcp, then run `npm install` and `npm run build`. Run `npm run smoke` and report the result (it prints only counts, never message contents).
-3. Get the absolute path of node (`command -v node`) and of dist/index.js.
-4. Run scripts/build-launcher.sh and use the resulting ~/.local/share/imessage-mcp/imessage-mcp-launcher as the "command" (no args). Back up ~/Library/Application Support/Claude/claude_desktop_config.json, then add an "imessage" entry under "mcpServers" with that node path as "command" and the dist/index.js path in "args". Keep every existing server entry unchanged and keep the JSON valid.
+3. (The launcher build in the next step bakes in the node and dist/index.js paths, so nothing to do here.)
+4. Run scripts/build-launcher.sh and use the resulting ~/.local/share/imessage-mcp/imessage-mcp-launcher as the "command" (no args). Back up ~/Library/Application Support/Claude/claude_desktop_config.json, then add an "imessage" entry under "mcpServers" with the launcher path as "command" and no "args". Keep every existing server entry unchanged and keep the JSON valid.
 5. Tell me to add that launcher file (not node, not all of Node) to Full Disk Access (System Settings > Privacy & Security > Full Disk Access), then fully quit and reopen Claude Desktop. Do not change any system or security setting yourself.
 6. After I restart, help me verify by asking Claude to list my 3 most recent chats. Do not print or store message contents beyond what I ask for.
 
